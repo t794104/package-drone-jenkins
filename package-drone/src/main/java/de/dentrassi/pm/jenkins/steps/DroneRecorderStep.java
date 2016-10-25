@@ -24,22 +24,34 @@ import hudson.Util;
 
 import javax.annotation.Nonnull;
 
-/**
- * Archiving for gatling reports.
- */
 public class DroneRecorderStep extends AbstractStepImpl {
 
-	public String serverUrl;
+	private String serverUrl;
 	
-	public String channel;
+	private String channel;
 	
-	public String deployKey;
+	private String deployKey;
 	
-	public String artifacts;
-
+	private String artifacts;
 
 	@DataBoundConstructor
     public DroneRecorderStep() {}
+
+    public String getserverUrl() {
+        return serverUrl;
+    }
+
+    public String getchannel() {
+        return channel;
+    }
+
+    public String getdeployKey() {
+        return deployKey;
+    }
+
+    public String getartifacts() {
+        return artifacts;
+    }
 
     @DataBoundSetter 
     public void setserverUrl(String serverUrl) {

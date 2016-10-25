@@ -247,7 +247,8 @@ public class DroneRecorder extends Recorder implements SimpleBuildStep
 
             b.setPath ( b.getPath () + String.format ( "/api/v2/upload/channel/%s/%s", URIUtil.encodeWithinPath ( this.channel ), file ) );
 
-            final String jenkinsUrl = Jenkins.getInstance ().getRootUrl ();
+            final String jenkinsUrl = "https://jenkins2.service.cisnet";
+            //final String jenkinsUrl = Jenkins.getInstance().getRootUrl();
             if ( jenkinsUrl != null )
             {
                 final String url = jenkinsUrl + run.getUrl ();
