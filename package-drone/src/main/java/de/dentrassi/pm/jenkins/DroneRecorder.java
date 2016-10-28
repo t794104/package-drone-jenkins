@@ -217,7 +217,36 @@ public class DroneRecorder extends Recorder implements SimpleBuildStep
 
         final String artifacts = env.expand ( this.artifacts );
 
-        final UploadFiles uploader = new UploadFiles ( artifacts, this.excludes, this.defaultExcludes, this.stripPath, run, listener );
+        final URI fullUri;
+        try
+        {
+	        final URIBuilder b = new URIBuilder ( this.serverUrl );
+	
+	        b.setUserInfo ( "deploy", this.deployKey );
+	        b.setPath ( b.getPath () + String.format ( "/api/v2/upload/channel/%s", URIUtil.encodeWithinPath ( this.channel ) ) );
+	
+	        final Jenkins instance = Jenkins.getInstance();
+	        if (instance != null)
+	        {
+	        	final String jenkinsUrl = instance.getRootUrl();
+		        if ( jenkinsUrl != null )
+		        {
+		            final String url = jenkinsUrl + run.getUrl ();
+		            b.addParameter ( "jenkins:buildUrl", url );
+		        }
+        	}
+	        b.addParameter ( "jenkins:buildId", run.getId () );
+	        b.addParameter ( "jenkins:buildNumber", String.valueOf ( run.getNumber () ) );
+	        b.addParameter ( "jenkins:jobName", run.getParent ().getFullName () );
+	
+	        fullUri = b.build ();
+        }
+        catch ( final URISyntaxException e )
+        {
+            throw new IOException ( e );
+        }
+        
+        final UploadFiles uploader = new UploadFiles ( artifacts, this.excludes, this.defaultExcludes, this.stripPath, fullUri, listener );
         try
         {
             workspace.act ( uploader );
@@ -235,40 +264,7 @@ public class DroneRecorder extends Recorder implements SimpleBuildStep
         run.addAction ( new BuildData ( this.serverUrl, this.channel, uploader.artifacts ) );
     }
 
-    private URI makeUrl ( final String file, final Run<?, ?> run ) throws URIException, IOException
-    {
-        final URI fullUri;
-        try
-        {
-
-            final URIBuilder b = new URIBuilder ( this.serverUrl );
-
-            b.setUserInfo ( "deploy", this.deployKey );
-
-            b.setPath ( b.getPath () + String.format ( "/api/v2/upload/channel/%s/%s", URIUtil.encodeWithinPath ( this.channel ), file ) );
-
-            final String jenkinsUrl = "https://jenkins2.service.cisnet";
-            //final String jenkinsUrl = Jenkins.getInstance().getRootUrl();
-            if ( jenkinsUrl != null )
-            {
-                final String url = jenkinsUrl + run.getUrl ();
-                b.addParameter ( "jenkins:buildUrl", url );
-            }
-            b.addParameter ( "jenkins:buildId", run.getId () );
-            b.addParameter ( "jenkins:buildNumber", String.valueOf ( run.getNumber () ) );
-            b.addParameter ( "jenkins:jobName", run.getParent ().getFullName () );
-
-            fullUri = b.build ();
-
-        }
-        catch ( final URISyntaxException e )
-        {
-            throw new IOException ( e );
-        }
-        return fullUri;
-    }
-
-    private final class UploadFiles extends MasterToSlaveFileCallable<List<String>> implements Closeable
+    private static final class UploadFiles extends MasterToSlaveFileCallable<List<String>> implements Closeable
     {
         private static final long serialVersionUID = 1;
 
@@ -276,9 +272,8 @@ public class DroneRecorder extends Recorder implements SimpleBuildStep
 
         private final boolean defaultExcludes;
 
-        private final Run<?, ?> run;
-
-        private final DefaultHttpClient httpclient;
+        //private final DefaultHttpClient httpclient;
+        private final URI fullUri; 
 
         private final TaskListener listener;
 
@@ -293,23 +288,21 @@ public class DroneRecorder extends Recorder implements SimpleBuildStep
             return this.failed;
         }
 
-        UploadFiles ( final String includes, final String excludes, final boolean defaultExcludes, final boolean stripPath, final Run<?, ?> run, final TaskListener listener )
+        UploadFiles ( String includes, String excludes, boolean defaultExcludes, boolean stripPath, URI fullUri, TaskListener listener )
         {
             this.includes = includes;
             this.excludes = excludes;
             this.defaultExcludes = defaultExcludes;
             this.stripPath = stripPath;
 
-            this.run = run;
+            this.fullUri = fullUri;
             this.listener = listener;
-
-            this.httpclient = new DefaultHttpClient ();
         }
 
         @Override
         public void close ()
         {
-            this.httpclient.getConnectionManager ().shutdown ();
+            //this.httpclient.getConnectionManager ().shutdown ();
         }
 
         @Override
@@ -321,10 +314,10 @@ public class DroneRecorder extends Recorder implements SimpleBuildStep
             fileSet.setDefaultexcludes ( this.defaultExcludes );
 
             final String[] includedFiles = fileSet.getDirectoryScanner ().getIncludedFiles ();
-            if ( includedFiles.length == 0 && !isAllowEmptyArchive () )
-            {
-                this.run.setResult ( Result.FAILURE );
-            }
+//            if ( includedFiles.length == 0 )
+//            {
+//                this.run.setResult ( Result.FAILURE );
+//            }
 
             for ( final String f : includedFiles )
             {
@@ -346,7 +339,20 @@ public class DroneRecorder extends Recorder implements SimpleBuildStep
 
         public void performUpload ( final File file, final String fileName ) throws URIException, IOException
         {
-            final URI uri = makeUrl ( fileName, this.run );
+        	final URI uri;
+        	
+        	DefaultHttpClient httpclient = new DefaultHttpClient ();
+            try
+            {
+	        	final URIBuilder b = new URIBuilder ( this.fullUri );
+	            b.setPath ( b.getPath () + String.format ( "/%s", fileName ) );
+	            uri = b.build ();
+            }
+            catch ( final URISyntaxException e )
+            {
+                throw new IOException ( e );
+            }
+	           
 
             final HttpPut httppost = new HttpPut ( uri );
 
@@ -356,7 +362,7 @@ public class DroneRecorder extends Recorder implements SimpleBuildStep
 
                 httppost.setEntity ( new InputStreamEntity ( stream, file.length () ) );
 
-                final HttpResponse response = this.httpclient.execute ( httppost );
+                final HttpResponse response = httpclient.execute ( httppost );
                 final HttpEntity resEntity = response.getEntity ();
 
                 if ( resEntity != null )
@@ -376,6 +382,7 @@ public class DroneRecorder extends Recorder implements SimpleBuildStep
             {
                 stream.close ();
             }
+            httpclient.getConnectionManager ().shutdown ();
         }
 
         private void addUploadFailure ( final String fileName, final HttpResponse response ) throws UnsupportedEncodingException, IOException
@@ -402,10 +409,10 @@ public class DroneRecorder extends Recorder implements SimpleBuildStep
             this.artifacts.put ( fileName, artId );
         }
 
-        private String makeArtUrl ( final String artId ) throws URIException
-        {
-            return String.format ( "%s/channel/%s/artifacts/%s/view", DroneRecorder.this.serverUrl, encodeWithinPath ( DroneRecorder.this.channel ), encodeWithinPath ( artId ) );
-        }
+//        private String makeArtUrl ( final String artId ) throws URIException
+//        {
+//            return String.format ( "%s/channel/%s/artifacts/%s/view", DroneRecorder.this.serverUrl, encodeWithinPath ( DroneRecorder.this.channel ), encodeWithinPath ( artId ) );
+//        }
 
     }
 
